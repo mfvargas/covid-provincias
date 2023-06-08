@@ -1,0 +1,171 @@
+---
+title: "Casos positivos de COVID-19 en provincias de Costa Rica"
+author: "Manuel Vargas"
+format: html
+---
+
+# Carga de paquetes
+
+```{r}
+#| label: carga-paquetes
+#| warning: false
+#| message: false
+#| code-fold: true
+
+library(tidyverse)
+library(DT)
+library(plotly)
+library(sf)
+library(leaflet)
+library(leaflet.extras)
+library(leafem)
+```
+
+# Carga de datos
+```{r}
+#| label: carga-datos
+#| warning: false
+#| message: false
+#| code-fold: true
+
+# Carga de datos de cantones
+cantones <-
+  st_read("cantones_2020.geojson", quiet = TRUE)
+
+# Reproyección a WGS84
+cantones <-
+  st_transform(cantones, 4326)
+
+# El argumento file debe tener la ruta al archivo de datos
+covid_positivos_cantones <-
+  read_delim(
+    file = "05_30_22_CSV_POSITIVOS.csv",
+    locale = locale(encoding = "WINDOWS-1252"), # para desplegar correctamente acentos y otros caracteres
+    col_select = c("cod_provin", "provincia", "cod_canton", "canton", "30/05/2022") # 30/05/2022 contiene los datos para la última fecha disponible
+)
+
+# Se remueve la fila con canton == "Otros"
+covid_positivos_cantones <-
+  covid_positivos_cantones |>
+  filter(canton != "Otros")
+
+# Cambio de nombre de columnas
+covid_positivos_cantones <-
+  covid_positivos_cantones %>%
+  rename(positivos_20220530 = '30/05/2022')
+
+# Carga de datos de provincias
+provincias <-
+  st_read("provincias_2020.geojson", quiet = TRUE)
+
+# Simplificación de geometrías
+provincias <-
+  provincias |>
+  st_simplify(dTolerance = 200, preserveTopology = TRUE)
+
+# Reproyección a WGS84
+provincias <-
+  st_transform(provincias, 4326)
+```
+
+# Agregación de cantones en provincias
+```{r}
+#| label: agregacion-provincias
+#| warning: false
+#| message: false
+#| code-fold: true
+
+covid_positivos_provincias <-
+  covid_positivos_cantones |>
+  group_by(cod_provin) |>
+  summarize(covid_positivos = sum(positivos_20220530, na.rm = TRUE))
+```
+
+# Unión
+```{r}
+#| label: union-provincias-covid
+#| warning: false
+#| message: false
+#| code-fold: true
+
+provincias_union_covid <-
+  left_join(
+    provincias,
+    covid_positivos_provincias,
+    by = "cod_provin"
+  )
+```
+
+# Mapa
+```{r}
+#| label: mapa
+#| warning: false
+#| message: false
+#| code-fold: true
+
+# Paleta de colores
+colores_provincias_union_covid <-
+  colorNumeric(
+    palette = "YlOrRd",
+    domain = provincias_union_covid$covid_positivos,
+    na.color = "transparent"
+  )
+
+
+leaflet() |>
+  addTiles(group = "OSM") |>
+  addPolygons(
+    data = provincias_union_covid,
+    fillColor = ~ colores_provincias_union_covid(provincias_union_covid$covid_positivos),
+    fillOpacity = 0.8,
+    color = "black",
+    stroke = TRUE,
+    weight = 1.0,
+    group = "Casos positivos al 2022-05-30"
+  ) |>
+  addLegend(
+    position = "bottomleft",
+    pal = colores_provincias_union_covid,
+    values = provincias_union_covid$covid_positivos,
+    group = "Casos positivos al 2022-05-30",
+    title = "Cantidad de casos"
+  ) |>
+  addLayersControl(
+    baseGroups = c("OSM"),
+    overlayGroups = c("Casos positivos al 2022-05-30")
+  )
+```
+
+# Tabla
+```{r}
+#| label: tabla
+#| warning: false
+#| message: false
+#| code-fold: true
+
+provincias_union_covid |>
+  st_drop_geometry() |>
+  select(cod_provin, provincia, covid_positivos) |>
+  arrange(desc(covid_positivos)) |>
+  datatable(
+    colnames = c("Código de provincia", "Provincia", "Cantidad de casos positivos al 2022-05-30")
+  )
+```
+
+# Gráfico
+```{r}
+#| label: grafico
+#| warning: false
+#| message: false
+#| code-fold: true
+
+# Gráfico de barras
+grafico <-
+provincias_union_covid |>
+  st_drop_geometry() |>
+  ggplot(aes(x = reorder(provincia, -covid_positivos), y = covid_positivos)) +
+  geom_col()
+
+ggplotly(grafico)
+```
+
